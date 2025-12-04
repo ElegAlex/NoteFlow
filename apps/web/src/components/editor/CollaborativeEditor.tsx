@@ -142,15 +142,7 @@ export function CollaborativeEditor({
     [ydoc, provider, wikilinkExtension]
   );
 
-  // Update cursor user when provider changes
-  useEffect(() => {
-    if (editor && provider) {
-      const user = provider.awareness.getLocalState()?.user;
-      if (user) {
-        editor.commands.updateUser(user);
-      }
-    }
-  }, [editor, provider]);
+  // Sync is handled by Yjs - no need to update cursor manually
 
   if (!editor) {
     return null;

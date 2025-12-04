@@ -3,7 +3,7 @@
 // (US-041, US-042 - Sprint 3-4)
 // ===========================================
 
-import { CollaboratorInfo } from '../../hooks/useCollaboration';
+import type { CollaboratorInfo } from '../../hooks/useCollaboration';
 import { cn } from '../../lib/utils';
 
 interface CollaboratorListProps {

@@ -3,9 +3,9 @@
 // (EP-005 - Sprint 3-4)
 // ===========================================
 
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useMemo, useRef } from 'react';
 import * as Y from 'yjs';
-import { WebsocketProvider } from 'y-websocket';
+import { HocuspocusProvider } from '@hocuspocus/provider';
 import { useAuthStore } from '../stores/auth';
 
 const YJS_URL = import.meta.env.VITE_YJS_URL || 'ws://localhost:1234';
@@ -23,7 +23,7 @@ interface UseCollaborationOptions {
 
 interface UseCollaborationReturn {
   ydoc: Y.Doc;
-  provider: WebsocketProvider | null;
+  provider: HocuspocusProvider | null;
   isConnected: boolean;
   collaborators: CollaboratorInfo[];
   isSynced: boolean;
@@ -34,57 +34,61 @@ export function useCollaboration({
   onAwarenessChange,
 }: UseCollaborationOptions): UseCollaborationReturn {
   const { user } = useAuthStore();
-  const [provider, setProvider] = useState<WebsocketProvider | null>(null);
+  const [provider, setProvider] = useState<HocuspocusProvider | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const [isSynced, setIsSynced] = useState(false);
   const [collaborators, setCollaborators] = useState<CollaboratorInfo[]>([]);
+  const providerRef = useRef<HocuspocusProvider | null>(null);
 
-  // Create Yjs document - stable reference
+  // Create Yjs document - stable reference per documentId
   const ydoc = useMemo(() => new Y.Doc(), [documentId]);
 
-  // Get auth token for WebSocket connection
-  const getToken = useCallback(async () => {
-    // Token is stored in cookies, we need to get it from the API
-    // For now, we'll use localStorage as fallback
-    return localStorage.getItem('collabnotes-token') || '';
-  }, []);
-
   useEffect(() => {
-    if (!documentId || !user) return;
+    // Validate documentId - must be a valid UUID-like string
+    if (!documentId || documentId.length < 10) {
+      console.warn('[Collaboration] Invalid documentId:', documentId);
+      return;
+    }
 
-    let wsProvider: WebsocketProvider;
+    // Get token from localStorage
+    const token = localStorage.getItem('collabnotes-token') || '';
 
-    const setupConnection = async () => {
-      const token = await getToken();
+    // Generate user color
+    const colors = [
+      '#F44336', '#E91E63', '#9C27B0', '#673AB7',
+      '#3F51B5', '#2196F3', '#03A9F4', '#00BCD4',
+      '#009688', '#4CAF50', '#8BC34A', '#CDDC39',
+    ];
+    const color = colors[Math.floor(Math.random() * colors.length)];
+    const userName = user?.displayName || user?.username || 'Anonymous';
 
-      wsProvider = new WebsocketProvider(
-        YJS_URL,
-        `note:${documentId}`,
-        ydoc,
-        {
-          params: { token },
-        }
-      );
+    const roomName = `note:${documentId}`;
+    console.log('[Collaboration] Connecting to room:', roomName);
 
-      // Connection status
-      wsProvider.on('status', ({ status }: { status: string }) => {
-        setIsConnected(status === 'connected');
-      });
-
-      // Sync status
-      wsProvider.on('sync', (isSynced: boolean) => {
-        setIsSynced(isSynced);
-      });
-
-      // Awareness (collaborator presence)
-      wsProvider.awareness.on('change', () => {
-        const states = wsProvider.awareness.getStates();
+    const hocuspocusProvider = new HocuspocusProvider({
+      url: YJS_URL,
+      name: roomName,
+      document: ydoc,
+      token,
+      onConnect: () => {
+        console.log('[Collaboration] Connected to', roomName);
+        setIsConnected(true);
+      },
+      onDisconnect: () => {
+        console.log('[Collaboration] Disconnected from', roomName);
+        setIsConnected(false);
+      },
+      onSynced: () => {
+        console.log('[Collaboration] Synced with', roomName);
+        setIsSynced(true);
+      },
+      onAwarenessChange: ({ states }) => {
         const users: CollaboratorInfo[] = [];
 
-        states.forEach((state, clientId) => {
-          if (state.user && clientId !== wsProvider.awareness.clientID) {
+        states.forEach((state: { user?: { name: string; color: string; id: string } }) => {
+          if (state.user && state.user.id !== (user?.id || 'anonymous')) {
             users.push({
-              id: String(clientId),
+              id: state.user.id,
               name: state.user.name,
               color: state.user.color,
             });
@@ -93,34 +97,26 @@ export function useCollaboration({
 
         setCollaborators(users);
         onAwarenessChange?.(users);
-      });
+      },
+    });
 
-      // Set local user info
-      const colors = [
-        '#F44336', '#E91E63', '#9C27B0', '#673AB7',
-        '#3F51B5', '#2196F3', '#03A9F4', '#00BCD4',
-        '#009688', '#4CAF50', '#8BC34A', '#CDDC39',
-      ];
-      const color = colors[Math.floor(Math.random() * colors.length)];
+    // Set local user awareness
+    hocuspocusProvider.setAwarenessField('user', {
+      name: userName,
+      color,
+      id: user?.id || `anon-${Math.random().toString(36).slice(2, 9)}`,
+    });
 
-      wsProvider.awareness.setLocalStateField('user', {
-        name: user.displayName || user.username,
-        color,
-        id: user.id,
-      });
-
-      setProvider(wsProvider);
-    };
-
-    setupConnection();
+    providerRef.current = hocuspocusProvider;
+    setProvider(hocuspocusProvider);
 
     return () => {
-      if (wsProvider) {
-        wsProvider.destroy();
-      }
+      console.log('[Collaboration] Cleaning up provider for', roomName);
+      hocuspocusProvider.destroy();
       ydoc.destroy();
+      providerRef.current = null;
     };
-  }, [documentId, user, ydoc, getToken, onAwarenessChange]);
+  }, [documentId, user?.id, user?.displayName, user?.username, ydoc, onAwarenessChange]);
 
   return {
     ydoc,
