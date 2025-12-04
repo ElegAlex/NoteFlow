@@ -9,7 +9,8 @@ import { Button } from '../components/ui/Button';
 import { Spinner } from '../components/ui/Spinner';
 import { toast } from '../components/ui/Toaster';
 import { formatRelativeTime, debounce } from '../lib/utils';
-import { NoteEditor } from '../components/editor/NoteEditor';
+import { CollaborativeEditor } from '../components/editor/CollaborativeEditor';
+import type { CollaboratorInfo } from '../hooks/useCollaboration';
 
 export function NotePage() {
   const { noteId } = useParams<{ noteId: string }>();
@@ -28,6 +29,11 @@ export function NotePage() {
 
   const [title, setTitle] = useState('');
   const [showMenu, setShowMenu] = useState(false);
+  const [collaborators, setCollaborators] = useState<CollaboratorInfo[]>([]);
+
+  const handleCollaboratorsChange = useCallback((newCollaborators: CollaboratorInfo[]) => {
+    setCollaborators(newCollaborators);
+  }, []);
 
   useEffect(() => {
     if (noteId) {
@@ -58,15 +64,6 @@ export function NotePage() {
     setTitle(newTitle);
     debouncedSaveTitle(newTitle);
   };
-
-  const handleContentChange = useCallback(
-    (content: string) => {
-      if (noteId) {
-        updateNote(noteId, { content });
-      }
-    },
-    [noteId, updateNote]
-  );
 
   const handleDelete = async () => {
     if (!noteId) return;
@@ -220,11 +217,10 @@ export function NotePage() {
       </div>
 
       {/* Editor */}
-      <div className="flex-1 overflow-auto">
-        <NoteEditor
-          content={currentNote.content || ''}
-          onChange={handleContentChange}
+      <div className="flex-1 overflow-hidden">
+        <CollaborativeEditor
           noteId={noteId!}
+          onCollaboratorsChange={handleCollaboratorsChange}
         />
       </div>
     </div>

@@ -4,6 +4,7 @@
 // ===========================================
 
 import { useCallback, useEffect, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Placeholder from '@tiptap/extension-placeholder';
@@ -14,10 +15,13 @@ import Highlight from '@tiptap/extension-highlight';
 import Typography from '@tiptap/extension-typography';
 import Collaboration from '@tiptap/extension-collaboration';
 import CollaborationCursor from '@tiptap/extension-collaboration-cursor';
-import { useCollaboration, CollaboratorInfo } from '../../hooks/useCollaboration';
+import { useCollaboration } from '../../hooks/useCollaboration';
+import type { CollaboratorInfo } from '../../hooks/useCollaboration';
 import { EditorToolbar } from './EditorToolbar';
-import { WikilinkExtension } from './extensions/Wikilink';
+import { createWikilinkExtension } from './extensions/Wikilink';
 import { CollaboratorList } from './CollaboratorList';
+import { api } from '../../lib/api';
+import { toast } from '../ui/Toaster';
 
 interface CollaborativeEditorProps {
   noteId: string;
@@ -30,6 +34,7 @@ export function CollaborativeEditor({
   editable = true,
   onCollaboratorsChange,
 }: CollaborativeEditorProps) {
+  const navigate = useNavigate();
   const {
     ydoc,
     provider,
@@ -40,6 +45,47 @@ export function CollaborativeEditor({
     documentId: noteId,
     onAwarenessChange: onCollaboratorsChange,
   });
+
+  // Handle wikilink navigation
+  const handleWikilinkClick = useCallback(async (title: string) => {
+    try {
+      // Search for note by title
+      const response = await api.get<{ notes: Array<{ id: string; title: string }> }>(
+        `/search?q=${encodeURIComponent(title)}&limit=1`
+      );
+
+      const notes = response.data?.notes ?? [];
+      const exactMatch = notes.find(
+        (n: { id: string; title: string }) => n.title.toLowerCase() === title.toLowerCase()
+      );
+
+      if (exactMatch) {
+        navigate(`/notes/${exactMatch.id}`);
+      } else if (notes.length > 0) {
+        // Navigate to first result if no exact match
+        navigate(`/notes/${notes[0].id}`);
+      } else {
+        // Note doesn't exist - offer to create it
+        const create = window.confirm(
+          `La note "${title}" n'existe pas. Voulez-vous la créer ?`
+        );
+        if (create) {
+          const newNote = await api.post<{ id: string }>('/notes', { title });
+          navigate(`/notes/${newNote.data.id}`);
+          toast.success(`Note "${title}" créée`);
+        }
+      }
+    } catch (error) {
+      console.error('Error navigating to wikilink:', error);
+      toast.error('Erreur lors de la navigation');
+    }
+  }, [navigate]);
+
+  // Create wikilink extension with navigation
+  const wikilinkExtension = useMemo(
+    () => createWikilinkExtension(handleWikilinkClick),
+    [handleWikilinkClick]
+  );
 
   const editor = useEditor(
     {
@@ -67,7 +113,7 @@ export function CollaborativeEditor({
           multicolor: true,
         }),
         Typography,
-        WikilinkExtension,
+        wikilinkExtension,
         // Collaborative editing
         Collaboration.configure({
           document: ydoc,
@@ -93,7 +139,7 @@ export function CollaborativeEditor({
         },
       },
     },
-    [ydoc, provider]
+    [ydoc, provider, wikilinkExtension]
   );
 
   // Update cursor user when provider changes

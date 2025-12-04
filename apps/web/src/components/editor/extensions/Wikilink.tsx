@@ -8,7 +8,7 @@ import { Plugin, PluginKey } from '@tiptap/pm/state';
 import { Decoration, DecorationSet } from '@tiptap/pm/view';
 
 export interface WikilinkOptions {
-  HTMLAttributes: Record<string, any>;
+  HTMLAttributes: Record<string, unknown>;
   onWikilinkClick?: (title: string) => void;
 }
 
@@ -89,8 +89,10 @@ export const WikilinkExtension = Node.create<WikilinkOptions>({
 
   addProseMirrorPlugins() {
     const wikilinkRegex = /\[\[([^\]]+)\]\]/g;
+    const onWikilinkClick = this.options.onWikilinkClick;
 
     return [
+      // Decoration plugin to style [[wikilinks]] in text
       new Plugin({
         key: new PluginKey('wikilink-decorator'),
         props: {
@@ -103,6 +105,9 @@ export const WikilinkExtension = Node.create<WikilinkOptions>({
 
               const text = node.text || '';
               let match;
+
+              // Reset regex lastIndex for each node
+              wikilinkRegex.lastIndex = 0;
 
               while ((match = wikilinkRegex.exec(text)) !== null) {
                 const start = pos + match.index;
@@ -118,6 +123,32 @@ export const WikilinkExtension = Node.create<WikilinkOptions>({
             });
 
             return DecorationSet.create(doc, decorations);
+          },
+          // Handle click on wikilinks
+          handleClick: (view, pos, event) => {
+            const target = event.target as HTMLElement;
+
+            // Check if clicked on a wikilink decoration
+            if (target.classList.contains('wikilink')) {
+              const title = target.getAttribute('data-title');
+              if (title && onWikilinkClick) {
+                event.preventDefault();
+                onWikilinkClick(title);
+                return true;
+              }
+            }
+
+            // Check if clicked on a wikilink node
+            if (target.getAttribute('data-type') === 'wikilink') {
+              const title = target.getAttribute('data-title');
+              if (title && onWikilinkClick) {
+                event.preventDefault();
+                onWikilinkClick(title);
+                return true;
+              }
+            }
+
+            return false;
           },
         },
       }),
@@ -137,3 +168,10 @@ export const WikilinkExtension = Node.create<WikilinkOptions>({
     };
   },
 });
+
+// Helper to create extension with navigation callback
+export function createWikilinkExtension(onNavigate: (title: string) => void) {
+  return WikilinkExtension.configure({
+    onWikilinkClick: onNavigate,
+  });
+}

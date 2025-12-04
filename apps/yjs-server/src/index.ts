@@ -102,7 +102,7 @@ const server = new Hocuspocus({
 
     // Check permission (owner or has folder permission)
     const hasAccess =
-      note.createdById === context.userId ||
+      note.authorId === context.userId ||
       note.folder?.permissions.some((p) => p.userId === context.userId && p.canRead);
 
     if (!hasAccess) {
@@ -140,8 +140,8 @@ const server = new Hocuspocus({
       data: {
         action: 'note.collaborate.join',
         userId: context.userId,
-        targetType: 'note',
-        targetId: documentName.replace('note:', ''),
+        resourceType: 'note',
+        resourceId: documentName.replace('note:', ''),
         details: { connectionId: connection.id },
       },
     });
@@ -166,8 +166,8 @@ const server = new Hocuspocus({
       data: {
         action: 'note.collaborate.leave',
         userId: context.userId,
-        targetType: 'note',
-        targetId: documentName.replace('note:', ''),
+        resourceType: 'note',
+        resourceId: documentName.replace('note:', ''),
         details: { connectionId: connection.id },
       },
     });
