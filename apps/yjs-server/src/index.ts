@@ -1,14 +1,18 @@
 // ===========================================
 // Serveur de Collaboration Yjs/Hocuspocus
-// (EP-005 - Sprint 3-4)
+// (EP-005 - Sprint 5)
+// US-029: Connexion WebSocket avec authentification JWT
+// US-033: Persistance Y.Doc en base
 // ===========================================
 
 import 'dotenv/config';
 import { Hocuspocus } from '@hocuspocus/server';
+import { Database } from '@hocuspocus/extension-database';
 import { Logger } from '@hocuspocus/extension-logger';
 import { Throttle } from '@hocuspocus/extension-throttle';
 import { prisma } from '@collabnotes/database';
 import jwt from 'jsonwebtoken';
+import * as Y from 'yjs';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
 const PORT = parseInt(process.env.YJS_PORT || '1234', 10);
@@ -18,22 +22,47 @@ interface JWTPayload {
   username: string;
 }
 
-// Connected users per document
+// Connected users per document (for awareness tracking)
 const documentUsers = new Map<string, Map<string, { userId: string; username: string; color: string }>>();
 
-// Generate random color for user cursor
-function generateColor(): string {
-  const colors = [
-    '#F44336', '#E91E63', '#9C27B0', '#673AB7',
-    '#3F51B5', '#2196F3', '#03A9F4', '#00BCD4',
-    '#009688', '#4CAF50', '#8BC34A', '#CDDC39',
-    '#FFC107', '#FF9800', '#FF5722', '#795548',
-  ];
-  return colors[Math.floor(Math.random() * colors.length)];
+// Palette de couleurs pour les curseurs collaboratifs
+const CURSOR_COLORS = [
+  '#F44336', '#E91E63', '#9C27B0', '#673AB7',
+  '#3F51B5', '#2196F3', '#03A9F4', '#00BCD4',
+  '#009688', '#4CAF50', '#8BC34A', '#CDDC39',
+  '#FFC107', '#FF9800', '#FF5722', '#795548',
+];
+
+// Generate deterministic color based on user ID
+function generateColor(userId: string): string {
+  if (!userId || userId === 'anonymous') {
+    return CURSOR_COLORS[Math.floor(Math.random() * CURSOR_COLORS.length)];
+  }
+  // Hash simple pour couleur déterministe par utilisateur
+  let hash = 0;
+  for (let i = 0; i < userId.length; i++) {
+    hash = ((hash << 5) - hash) + userId.charCodeAt(i);
+    hash = hash & hash;
+  }
+  return CURSOR_COLORS[Math.abs(hash) % CURSOR_COLORS.length];
+}
+
+// Extract note ID from document name (format: "note:UUID")
+function extractNoteId(documentName: string): string | null {
+  if (!documentName || !documentName.startsWith('note:')) return null;
+  const noteId = documentName.replace('note:', '');
+  // Validate UUID format
+  if (noteId.length < 20) return null;
+  return noteId;
 }
 
 const server = new Hocuspocus({
   port: PORT,
+
+  // Délai avant sauvegarde (debounce)
+  debounce: 2000,
+  // Sauvegarde forcée maximum toutes les 10s
+  maxDebounce: 10000,
 
   extensions: [
     new Logger({
@@ -45,108 +74,163 @@ const server = new Hocuspocus({
       throttle: 100,  // 100ms between connections from same IP
       banTime: 30,    // 30 second ban for abusive clients
     }),
+    // Extension Database pour charger/sauvegarder le yjsState (US-033)
+    new Database({
+      // Charger le document depuis la base de données
+      fetch: async ({ documentName }) => {
+        const noteId = extractNoteId(documentName);
+        if (!noteId) return null;
+
+        try {
+          const note = await prisma.note.findUnique({
+            where: { id: noteId },
+            select: { yjsState: true, content: true },
+          });
+
+          if (!note) {
+            console.log(`[Database] Note ${noteId} not found`);
+            return null;
+          }
+
+          // Si on a un état Yjs, le retourner
+          if (note.yjsState) {
+            console.log(`[Database] Loaded Y.Doc state for ${documentName}`);
+            return new Uint8Array(note.yjsState);
+          }
+
+          // Sinon, initialiser le document avec le contenu HTML existant
+          console.log(`[Database] Initializing Y.Doc from HTML for ${documentName}`);
+          return null; // Le contenu sera initialisé côté client
+        } catch (error) {
+          console.error(`[Database] Error fetching ${documentName}:`, error);
+          return null;
+        }
+      },
+
+      // Sauvegarder le document dans la base de données
+      store: async ({ documentName, state, context }) => {
+        const noteId = extractNoteId(documentName);
+        if (!noteId) return;
+
+        try {
+          await prisma.note.update({
+            where: { id: noteId },
+            data: {
+              yjsState: Buffer.from(state),
+              modifiedBy: context.userId !== 'anonymous' ? context.userId : undefined,
+              updatedAt: new Date(),
+            },
+          });
+
+          console.log(`[Database] Saved Y.Doc state for ${documentName}`);
+        } catch (error) {
+          console.error(`[Database] Error storing ${documentName}:`, error);
+        }
+      },
+    }),
   ],
 
-  // Authentication - simplified for development
+  // Authentication - vérification JWT (US-029)
   async onAuthenticate(data) {
-    const { token } = data;
+    const { token, documentName } = data;
+    const noteId = extractNoteId(documentName);
 
-    // In development, allow anonymous access if no token
+    // En développement, permettre l'accès anonyme si pas de token
     if (!token) {
+      console.log(`[Auth] Anonymous access to ${documentName}`);
       return {
         userId: 'anonymous',
         username: 'Anonymous',
+        canWrite: true, // En dev, permettre l'écriture
       };
     }
 
     try {
       const payload = jwt.verify(token, JWT_SECRET) as JWTPayload;
 
-      // Verify user exists and is active
+      // Vérifier que l'utilisateur existe et est actif
       const user = await prisma.user.findUnique({
         where: { id: payload.userId },
         select: { id: true, username: true, displayName: true, isActive: true },
       });
 
       if (!user || !user.isActive) {
-        return {
-          userId: 'anonymous',
-          username: 'Anonymous',
-        };
+        console.log(`[Auth] User ${payload.userId} not found or inactive`);
+        throw new Error('User not found or inactive');
       }
+
+      // Vérifier les permissions sur la note si noteId existe
+      let canWrite = true;
+      if (noteId) {
+        const note = await prisma.note.findUnique({
+          where: { id: noteId },
+          include: {
+            folder: {
+              include: {
+                permissions: {
+                  where: {
+                    OR: [
+                      { userId: user.id },
+                      { roleId: { not: null } }, // TODO: vérifier le rôle de l'utilisateur
+                    ]
+                  },
+                },
+              },
+            },
+          },
+        });
+
+        if (note) {
+          // Propriétaire a tous les droits
+          if (note.authorId === user.id) {
+            canWrite = true;
+          } else {
+            // Vérifier permissions du dossier
+            const permission = note.folder?.permissions.find(p => p.userId === user.id);
+            canWrite = permission?.canWrite ?? false;
+          }
+        }
+      }
+
+      console.log(`[Auth] User ${user.displayName || user.username} authenticated (canWrite: ${canWrite})`);
 
       return {
         userId: user.id,
         username: user.displayName || user.username,
+        canWrite,
       };
     } catch (error) {
-      // Allow anonymous in development
-      return {
-        userId: 'anonymous',
-        username: 'Anonymous',
-      };
+      // En développement, permettre l'accès anonyme
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`[Auth] Fallback to anonymous access (dev mode)`);
+        return {
+          userId: 'anonymous',
+          username: 'Anonymous',
+          canWrite: true,
+        };
+      }
+      throw error;
     }
   },
 
-  // Authorization - check document access (simplified for development)
-  async onLoadDocument(data) {
-    const { documentName, context } = data;
-    const noteId = documentName.replace('note:', '');
-
-    // Allow anonymous access in development
-    if (context.userId === 'anonymous') {
-      return data.document;
-    }
-
-    // Check if user has access to the note
-    const note = await prisma.note.findUnique({
-      where: { id: noteId },
-      include: {
-        folder: {
-          include: {
-            permissions: {
-              where: { userId: context.userId },
-            },
-          },
-        },
-      },
-    });
-
-    if (!note) {
-      // Allow access anyway for development
-      return data.document;
-    }
-
-    // Check permission (owner or has folder permission)
-    const hasAccess =
-      note.authorId === context.userId ||
-      note.folder?.permissions.some((p) => p.userId === context.userId && p.canRead);
-
-    // Allow access anyway for development
-    if (!hasAccess) {
-      console.log(`[Auth] User ${context.userId} accessing note ${noteId} without explicit permission`);
-    }
-
-    return data.document;
-  },
-
-  // Connection handling
+  // Connection handling (US-031: tracking des collaborateurs, US-034: permissions)
   async onConnect(data) {
     const { documentName, context, connection } = data;
 
-    // Validate document name format (should be "note:UUID")
-    if (!documentName || !documentName.startsWith('note:') || documentName.length < 10) {
-      console.log(`[Collaboration] Rejected invalid document name: "${documentName}"`);
-      throw new Error('Invalid document name');
+    // Valider le format du nom de document
+    const noteId = extractNoteId(documentName);
+    if (!noteId) {
+      console.log(`[Connect] Rejected invalid document name: "${documentName}"`);
+      throw new Error('Invalid document name format');
     }
 
-    // Initialize document users map
+    // Initialiser la map des utilisateurs pour ce document
     if (!documentUsers.has(documentName)) {
       documentUsers.set(documentName, new Map());
     }
 
     const users = documentUsers.get(documentName)!;
-    const color = generateColor();
+    const color = generateColor(context.userId);
 
     users.set(connection.id, {
       userId: context.userId || 'anonymous',
@@ -154,53 +238,49 @@ const server = new Hocuspocus({
       color,
     });
 
-    console.log(`[Collaboration] ${context.username || 'Anonymous'} joined ${documentName}`);
+    const userCount = users.size;
+    console.log(`[Connect] ${context.username || 'Anonymous'} joined ${documentName} (canWrite: ${context.canWrite}, ${userCount} users)`);
+
+    // US-034: Envoyer les permissions au client via stateless message
+    connection.sendStateless(JSON.stringify({
+      type: 'permissions',
+      canWrite: context.canWrite ?? true,
+      userId: context.userId,
+      username: context.username,
+    }));
   },
 
-  // Disconnection handling
+  // Disconnection handling (US-035: gestion déconnexion)
   async onDisconnect(data) {
     const { documentName, context, connection } = data;
 
-    // Skip cleanup for invalid document names
-    if (!documentName || !documentName.startsWith('note:')) {
-      return;
-    }
+    const noteId = extractNoteId(documentName);
+    if (!noteId) return;
 
     const users = documentUsers.get(documentName);
     if (users) {
       users.delete(connection.id);
-      if (users.size === 0) {
+      const userCount = users.size;
+
+      if (userCount === 0) {
         documentUsers.delete(documentName);
       }
-    }
 
-    console.log(`[Collaboration] ${context?.username || 'Anonymous'} left ${documentName}`);
+      console.log(`[Disconnect] ${context?.username || 'Anonymous'} left ${documentName} (${userCount} users)`);
+    }
   },
 
-  // Save document to database
-  async onStoreDocument(data) {
-    const { documentName, document, context } = data;
-    const noteId = documentName.replace('note:', '');
+  // Gestion des statuts de documents
+  async onStateless({ documentName, payload }) {
+    // Permet de récupérer des infos sur le document sans se connecter
+    const noteId = extractNoteId(documentName);
+    if (!noteId) return;
 
-    try {
-      // Get HTML content from Yjs document
-      // The actual content extraction depends on y-prosemirror
-      // For now, we'll store the Yjs update
-      const update = Buffer.from(document.encodeStateAsUpdate());
-
-      await prisma.note.update({
-        where: { id: noteId },
-        data: {
-          yjsState: update,
-          modifiedBy: context.userId,
-          updatedAt: new Date(),
-        },
-      });
-
-      console.log(`[Storage] Saved ${documentName}`);
-    } catch (error) {
-      console.error(`[Storage] Error saving ${documentName}:`, error);
-    }
+    const users = documentUsers.get(documentName);
+    return JSON.stringify({
+      userCount: users?.size || 0,
+      users: users ? Array.from(users.values()) : [],
+    });
   },
 });
 

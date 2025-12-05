@@ -43,6 +43,7 @@ model User {
   auditLogs        AuditLog[]
   favorites        Favorite[]
   homepageConfigs  HomepageConfig[]
+  announcements    Announcement[]
 
   @@index([username])
   @@index([email])
@@ -377,4 +378,23 @@ model SystemConfig {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   @@map("system_config")
+}
+
+// ----- ANNONCES (US-045) -----
+
+model Announcement {
+  id          String    @id @default(uuid()) @db.Uuid
+  message     String    @db.VarChar(500)
+  type        String    @default("info") @db.VarChar(20) // info, warning, danger
+  dismissible Boolean   @default(true)
+  expiresAt   DateTime? @map("expires_at")
+  createdById String    @map("created_by_id") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  // Relations
+  createdBy User @relation(fields: [createdById], references: [id])
+
+  @@index([expiresAt])
+  @@map("announcements")
 }

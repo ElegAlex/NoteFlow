@@ -1,5 +1,6 @@
 // ===========================================
 // Page Note (US-010 à US-016)
+// Collaboration désactivée temporairement
 // ===========================================
 
 import { useEffect, useState, useCallback } from 'react';
@@ -10,7 +11,6 @@ import { Spinner } from '../components/ui/Spinner';
 import { toast } from '../components/ui/Toaster';
 import { formatRelativeTime, debounce } from '../lib/utils';
 import { CollaborativeEditor } from '../components/editor/CollaborativeEditor';
-import type { CollaboratorInfo } from '../hooks/useCollaboration';
 
 export function NotePage() {
   const { noteId } = useParams<{ noteId: string }>();
@@ -29,11 +29,6 @@ export function NotePage() {
 
   const [title, setTitle] = useState('');
   const [showMenu, setShowMenu] = useState(false);
-  const [collaborators, setCollaborators] = useState<CollaboratorInfo[]>([]);
-
-  const handleCollaboratorsChange = useCallback((newCollaborators: CollaboratorInfo[]) => {
-    setCollaborators(newCollaborators);
-  }, []);
 
   useEffect(() => {
     if (noteId) {
@@ -220,7 +215,10 @@ export function NotePage() {
       <div className="flex-1 overflow-hidden">
         <CollaborativeEditor
           noteId={noteId!}
-          onCollaboratorsChange={handleCollaboratorsChange}
+          initialContent={currentNote.content || ''}
+          onSave={async (content) => {
+            await updateNote(noteId!, { content });
+          }}
         />
       </div>
     </div>

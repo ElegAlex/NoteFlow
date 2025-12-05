@@ -1,5 +1,6 @@
 // ===========================================
 // Page Administration (US-110 à US-114)
+// US-053: Interface admin utilisateurs
 // ===========================================
 
 import { useState, useEffect } from 'react';
@@ -9,27 +10,46 @@ import { Input } from '../components/ui/Input';
 import { Card, CardHeader, CardTitle, CardContent } from '../components/ui/Card';
 import { Spinner } from '../components/ui/Spinner';
 import { toast } from '../components/ui/Toaster';
-import type { User } from '@collabnotes/types';
+import type { User, Role } from '@collabnotes/types';
 
 type Tab = 'users' | 'roles' | 'audit' | 'system';
+
+// Formater la date de dernière connexion
+function formatLastLogin(dateString: string | null | undefined): string {
+  if (!dateString) return 'Jamais';
+  const date = new Date(dateString);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffMins = Math.floor(diffMs / (1000 * 60));
+  const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+
+  if (diffMins < 5) return 'À l\'instant';
+  if (diffMins < 60) return `Il y a ${diffMins} min`;
+  if (diffHours < 24) return `Il y a ${diffHours}h`;
+  if (diffDays < 7) return `Il y a ${diffDays}j`;
+  return date.toLocaleDateString('fr-FR');
+}
 
 export function AdminPage() {
   const [activeTab, setActiveTab] = useState<Tab>('users');
   const [users, setUsers] = useState<User[]>([]);
+  const [roles, setRoles] = useState<Role[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
 
   useEffect(() => {
     if (activeTab === 'users') {
       loadUsers();
+      loadRoles();
     }
   }, [activeTab]);
 
   const loadUsers = async () => {
     setIsLoading(true);
     try {
-      const response = await api.get<{ users: User[] }>('/admin/users');
-      setUsers(response.data.users);
+      const response = await api.get<{ items: User[]; total: number }>('/users');
+      setUsers(response.data.items);
     } catch {
       toast.error('Erreur lors du chargement des utilisateurs');
     } finally {
@@ -37,13 +57,32 @@ export function AdminPage() {
     }
   };
 
+  const loadRoles = async () => {
+    try {
+      const response = await api.get<{ roles: Role[] }>('/users/roles');
+      setRoles(response.data.roles);
+    } catch {
+      // Silently fail - roles dropdown won't work but page still usable
+    }
+  };
+
   const toggleUserStatus = async (userId: string, isActive: boolean) => {
     try {
-      await api.patch(`/admin/users/${userId}`, { isActive: !isActive });
+      await api.patch(`/users/${userId}`, { isActive: !isActive });
       toast.success(`Utilisateur ${isActive ? 'désactivé' : 'activé'}`);
       loadUsers();
     } catch {
       toast.error('Erreur lors de la modification');
+    }
+  };
+
+  const changeUserRole = async (userId: string, roleId: string) => {
+    try {
+      await api.patch(`/users/${userId}`, { roleId });
+      toast.success('Rôle modifié');
+      loadUsers();
+    } catch {
+      toast.error('Erreur lors du changement de rôle');
     }
   };
 
@@ -110,6 +149,9 @@ export function AdminPage() {
                       <th className="text-left py-3 px-4 font-medium">Email</th>
                       <th className="text-left py-3 px-4 font-medium">Rôle</th>
                       <th className="text-left py-3 px-4 font-medium">Statut</th>
+                      <th className="text-left py-3 px-4 font-medium">
+                        Dernière connexion
+                      </th>
                       <th className="text-right py-3 px-4 font-medium">
                         Actions
                       </th>
@@ -132,9 +174,23 @@ export function AdminPage() {
                           {user.email || '-'}
                         </td>
                         <td className="py-3 px-4">
-                          <span className="inline-flex items-center px-2 py-1 rounded-full text-xs bg-muted">
-                            {user.role?.name || 'User'}
-                          </span>
+                          {roles.length > 0 ? (
+                            <select
+                              value={user.role?.id || ''}
+                              onChange={(e) => changeUserRole(user.id, e.target.value)}
+                              className="text-xs px-2 py-1 rounded border bg-background"
+                            >
+                              {roles.map((role) => (
+                                <option key={role.id} value={role.id}>
+                                  {role.name}
+                                </option>
+                              ))}
+                            </select>
+                          ) : (
+                            <span className="inline-flex items-center px-2 py-1 rounded-full text-xs bg-muted">
+                              {user.role?.name || 'User'}
+                            </span>
+                          )}
                         </td>
                         <td className="py-3 px-4">
                           <span
@@ -146,6 +202,9 @@ export function AdminPage() {
                           >
                             {user.isActive ? 'Actif' : 'Inactif'}
                           </span>
+                        </td>
+                        <td className="py-3 px-4 text-sm text-muted-foreground">
+                          {formatLastLogin(user.lastLoginAt)}
                         </td>
                         <td className="py-3 px-4 text-right">
                           <Button

@@ -5,7 +5,8 @@
 // ===========================================
 
 import { useCallback, useState, useRef, useEffect } from 'react';
-import { NodeViewWrapper, NodeViewProps } from '@tiptap/react';
+import { NodeViewWrapper } from '@tiptap/react';
+import type { NodeViewProps } from '@tiptap/react';
 import { cn } from '../../../../lib/utils';
 
 /** Taille minimale de l'image en pixels */

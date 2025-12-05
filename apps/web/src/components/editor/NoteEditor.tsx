@@ -11,6 +11,7 @@ import { useNavigate } from 'react-router-dom';
 import { EditorToolbar } from './EditorToolbar';
 import { SaveIndicator } from './SaveIndicator';
 import { TagSuggestionPopup, useTagSuggestion } from './extensions/tag';
+import { WikilinkSuggestionPopup, useWikilinkSuggestion } from './extensions/wikilink';
 import { useAutoSave } from '../../hooks/useAutoSave';
 import { useImageUpload, type UploadResult } from '../../hooks/useImageUpload';
 import {
@@ -73,6 +74,51 @@ export function NoteEditor({
     [navigate]
   );
 
+  // Callback pour clic sur un wikilink (US-038)
+  const handleWikilinkClick = useCallback(
+    async (title: string) => {
+      try {
+        // Chercher la note par titre
+        const response = await fetch(
+          `/api/v1/notes/search?q=${encodeURIComponent(title)}&limit=1`,
+          { credentials: 'include' }
+        );
+
+        if (response.ok) {
+          const data = await response.json();
+          const matchingNote = data.notes?.find(
+            (n: { title: string; slug: string }) =>
+              n.title.toLowerCase() === title.toLowerCase()
+          );
+
+          if (matchingNote) {
+            // Note trouvée, naviguer vers elle
+            navigate(`/notes/${matchingNote.slug}`);
+            return;
+          }
+        }
+
+        // Note non trouvée, proposer de la créer
+        if (window.confirm(`La note "${title}" n'existe pas. Voulez-vous la créer ?`)) {
+          const createResponse = await fetch('/api/v1/notes', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ title, content: '' }),
+          });
+
+          if (createResponse.ok) {
+            const newNote = await createResponse.json();
+            navigate(`/notes/${newNote.slug}`);
+          }
+        }
+      } catch (error) {
+        console.error('Failed to handle wikilink click:', error);
+      }
+    },
+    [navigate]
+  );
+
   // Hook d'upload d'images (US-023/024/025)
   const imageUpload = useImageUpload({
     noteId,
@@ -100,11 +146,12 @@ export function NoteEditor({
         ...config,
         features,
         onTagClick: handleTagClick,
+        onWikilinkClick: handleWikilinkClick,
         imageUpload: {
           uploadFn: handleImageUpload,
         },
       }),
-    [features, config, handleTagClick, handleImageUpload]
+    [features, config, handleTagClick, handleWikilinkClick, handleImageUpload]
   );
 
   // Props de l'éditeur (US-022)
@@ -135,11 +182,35 @@ export function NoteEditor({
     }
   }, []);
 
+  // Hook pour les suggestions de wikilinks (US-037)
+  const searchNotes = useCallback(async (query: string) => {
+    try {
+      const response = await fetch(
+        `/api/v1/notes/search?q=${encodeURIComponent(query)}&limit=8`,
+        { credentials: 'include' }
+      );
+      if (!response.ok) return [];
+      const data = await response.json();
+      return data.notes || [];
+    } catch {
+      return [];
+    }
+  }, []);
+
   const tagSuggestion = useTagSuggestion({
     editor,
     onSearch: searchTags,
     onSelect: () => {
       // Tag inséré automatiquement par le hook
+    },
+  });
+
+  // Hook pour les suggestions de wikilinks (US-037)
+  const wikilinkSuggestion = useWikilinkSuggestion({
+    editor,
+    onSearch: searchNotes,
+    onSelect: () => {
+      // Wikilink inséré automatiquement par le hook
     },
   });
 
@@ -180,6 +251,15 @@ export function NoteEditor({
           position={tagSuggestion.position}
           query={tagSuggestion.query}
           onSelect={tagSuggestion.selectTag}
+        />
+        {/* Wikilink suggestion popup (US-037) */}
+        <WikilinkSuggestionPopup
+          isOpen={wikilinkSuggestion.isOpen}
+          items={wikilinkSuggestion.items}
+          selectedIndex={wikilinkSuggestion.selectedIndex}
+          position={wikilinkSuggestion.position}
+          query={wikilinkSuggestion.query}
+          onSelect={wikilinkSuggestion.selectNote}
         />
       </div>
     </div>

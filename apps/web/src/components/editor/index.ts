@@ -1,11 +1,15 @@
 // ===========================================
-// Editor Components Index
+// Editor Components Index (Sprint 5)
 // ===========================================
 
+// Éditeurs
 export { NoteEditor, NoteEditorLegacy } from './NoteEditor';
-export { CollaborativeEditor } from './CollaborativeEditor';
-export { CollaboratorList, CollaboratorCursor } from './CollaboratorList';
+export { CollaborativeEditor, type CollaboratorInfo } from './CollaborativeEditor';
 export { EditorToolbar } from './EditorToolbar';
+export { SaveIndicator } from './SaveIndicator';
+
+// Composants legacy (déprécié, utiliser CollaborationBar)
+export { CollaboratorList, CollaboratorCursor } from './CollaboratorList';
 
 // Configuration de l'éditeur (US-022)
 export {

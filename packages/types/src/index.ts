@@ -138,6 +138,7 @@ export interface NoteSummary {
   authorId: string;
   updatedAt: string;
   isDeleted: boolean;
+  folderPath?: string; // US-042: Chemin du dossier pour affichage
 }
 
 export interface NoteFrontmatter {
@@ -152,7 +153,7 @@ export interface NoteFrontmatter {
 
 export interface CreateNoteRequest {
   title: string;
-  folderId: string;
+  folderId?: string | null; // Optional, null for root folder
   content?: string;
   frontmatter?: Partial<NoteFrontmatter>;
 }

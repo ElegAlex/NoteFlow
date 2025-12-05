@@ -20,7 +20,7 @@ import { parseLinks, updateLinks } from '../services/links.js';
 
 const createNoteSchema = z.object({
   title: z.string().min(1).max(255),
-  folderId: z.string().uuid(),
+  folderId: z.string().uuid().nullable().optional(), // US-041: Optional, null for root folder
   content: z.string().default(''),
   frontmatter: z.record(z.unknown()).optional(),
 });
@@ -30,6 +30,7 @@ const updateNoteSchema = z.object({
   content: z.string().optional(),
   frontmatter: z.record(z.unknown()).optional(),
   position: z.number().int().min(0).optional(),
+  folderId: z.string().uuid().optional(), // US-007: Déplacer vers un autre dossier
 });
 
 // ----- Helpers -----
@@ -60,6 +61,81 @@ function createDefaultFrontmatter(
 
 export const notesRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', app.authenticate);
+
+  /**
+   * GET /api/v1/notes/search
+   * US-037: Recherche de notes pour autocomplétion wikilinks
+   */
+  app.get('/search', {
+    schema: {
+      tags: ['Notes'],
+      summary: 'Search notes for autocomplete',
+      security: [{ cookieAuth: [] }],
+    },
+  }, async (request) => {
+    const { q = '', limit = '10' } = request.query as { q?: string; limit?: string };
+    const maxLimit = Math.min(parseInt(limit, 10) || 10, 20);
+
+    // Si pas de query, retourner les notes récentes
+    if (!q.trim()) {
+      const notes = await prisma.note.findMany({
+        where: { isDeleted: false },
+        select: {
+          id: true,
+          title: true,
+          slug: true,
+          folder: { select: { name: true, path: true } },
+          updatedAt: true,
+        },
+        orderBy: { updatedAt: 'desc' },
+        take: maxLimit,
+      });
+
+      return {
+        notes: notes.map((n) => ({
+          id: n.id,
+          title: n.title,
+          slug: n.slug,
+          folderPath: n.folder ? `${n.folder.path}${n.folder.name}` : '/',
+          updatedAt: n.updatedAt.toISOString(),
+        })),
+      };
+    }
+
+    // Recherche fuzzy dans le titre
+    const searchTerm = q.toLowerCase();
+    const notes = await prisma.note.findMany({
+      where: {
+        isDeleted: false,
+        OR: [
+          { title: { contains: searchTerm, mode: 'insensitive' } },
+          { slug: { contains: searchTerm, mode: 'insensitive' } },
+        ],
+      },
+      select: {
+        id: true,
+        title: true,
+        slug: true,
+        folder: { select: { name: true, path: true } },
+        updatedAt: true,
+      },
+      orderBy: [
+        // Prioriser les correspondances exactes au début du titre
+        { updatedAt: 'desc' },
+      ],
+      take: maxLimit,
+    });
+
+    return {
+      notes: notes.map((n) => ({
+        id: n.id,
+        title: n.title,
+        slug: n.slug,
+        folderPath: n.folder ? `${n.folder.path}${n.folder.name}` : '/',
+        updatedAt: n.updatedAt.toISOString(),
+      })),
+    };
+  });
 
   /**
    * GET /api/v1/notes/recent
@@ -94,8 +170,47 @@ export const notesRoutes: FastifyPluginAsync = async (app) => {
     return {
       notes: notes.map((note) => ({
         ...note,
+        folderPath: note.folder?.path || null,
         createdAt: note.createdAt.toISOString(),
         updatedAt: note.updatedAt.toISOString(),
+      })),
+    };
+  });
+
+  /**
+   * GET /api/v1/notes/pinned
+   * US-044: Notes épinglées (pinned: true dans frontmatter)
+   */
+  app.get('/pinned', {
+    schema: {
+      tags: ['Notes'],
+      summary: 'Get pinned notes',
+      security: [{ cookieAuth: [] }],
+    },
+  }, async (request) => {
+    const notes = await prisma.note.findMany({
+      where: {
+        isDeleted: false,
+        frontmatter: {
+          path: ['pinned'],
+          equals: true,
+        },
+      },
+      include: {
+        folder: {
+          select: { id: true, name: true, path: true },
+        },
+      },
+      orderBy: { updatedAt: 'desc' },
+      take: 10,
+    });
+
+    return {
+      notes: notes.map((note) => ({
+        id: note.id,
+        title: note.title,
+        slug: note.slug,
+        folderPath: note.folder?.path || null,
       })),
     };
   });
@@ -121,9 +236,34 @@ export const notesRoutes: FastifyPluginAsync = async (app) => {
       });
     }
 
-    const { title, folderId, content, frontmatter: customFrontmatter } = parseResult.data;
+    const { title, folderId: requestFolderId, content, frontmatter: customFrontmatter } = parseResult.data;
     const userId = request.user.userId;
     const username = request.user.username;
+
+    // Si pas de folderId, utiliser le dossier racine de l'utilisateur
+    let folderId = requestFolderId;
+    if (!folderId) {
+      // Trouver ou créer un dossier racine pour l'utilisateur
+      let rootFolder = await prisma.folder.findFirst({
+        where: {
+          parentId: null,
+          createdById: userId,
+        },
+      });
+
+      if (!rootFolder) {
+        rootFolder = await prisma.folder.create({
+          data: {
+            name: 'Mes Notes',
+            path: '/Mes Notes',
+            createdById: userId,
+            position: 0,
+          },
+        });
+      }
+
+      folderId = rootFolder.id;
+    }
 
     // Vérifier les permissions sur le dossier
     const hasPermission = await checkPermission(userId, 'FOLDER', folderId, 'WRITE');
@@ -224,8 +364,11 @@ export const notesRoutes: FastifyPluginAsync = async (app) => {
     const { id } = request.params as { id: string };
     const userId = request.user.userId;
 
-    const note = await prisma.note.findUnique({
-      where: { id },
+    // Detect if id is a UUID or a slug
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+
+    const note = await prisma.note.findFirst({
+      where: isUuid ? { id, isDeleted: false } : { slug: id, isDeleted: false },
       include: {
         author: {
           select: { id: true, username: true, displayName: true, avatarUrl: true },
@@ -242,7 +385,7 @@ export const notesRoutes: FastifyPluginAsync = async (app) => {
       },
     });
 
-    if (!note || note.isDeleted) {
+    if (!note) {
       return reply.status(404).send({
         error: 'NOT_FOUND',
         message: 'Note non trouvée',
@@ -260,7 +403,7 @@ export const notesRoutes: FastifyPluginAsync = async (app) => {
 
     // Récupérer les rétroliens
     const backlinks = await prisma.link.findMany({
-      where: { targetNoteId: id, isBroken: false },
+      where: { targetNoteId: note.id, isBroken: false },
       include: {
         sourceNote: {
           select: {
@@ -302,8 +445,13 @@ export const notesRoutes: FastifyPluginAsync = async (app) => {
     const userId = request.user.userId;
     const username = request.user.username;
 
-    const note = await prisma.note.findUnique({ where: { id } });
-    if (!note || note.isDeleted) {
+    // Detect if id is a UUID or a slug
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+
+    const note = await prisma.note.findFirst({
+      where: isUuid ? { id, isDeleted: false } : { slug: id, isDeleted: false },
+    });
+    if (!note) {
       return reply.status(404).send({
         error: 'NOT_FOUND',
         message: 'Note non trouvée',
@@ -341,6 +489,18 @@ export const notesRoutes: FastifyPluginAsync = async (app) => {
     if (updates.position !== undefined) {
       updateData.position = updates.position;
     }
+    // US-007: Déplacer vers un autre dossier
+    if (updates.folderId && updates.folderId !== note.folderId) {
+      // Vérifier les permissions sur le dossier destination
+      const hasDestPermission = await checkPermission(userId, 'FOLDER', updates.folderId, 'WRITE');
+      if (!hasDestPermission) {
+        return reply.status(403).send({
+          error: 'FORBIDDEN',
+          message: "Vous n'avez pas les droits d'écriture sur le dossier destination",
+        });
+      }
+      updateData.folderId = updates.folderId;
+    }
 
     // Mettre à jour le frontmatter avec modified/modified_by
     const currentFrontmatter = note.frontmatter as NoteFrontmatter;
@@ -354,7 +514,7 @@ export const notesRoutes: FastifyPluginAsync = async (app) => {
     updateData.modifiedBy = userId;
 
     const updated = await prisma.note.update({
-      where: { id },
+      where: { id: note.id },
       data: updateData,
       include: {
         author: { select: { id: true, username: true, displayName: true } },
@@ -364,12 +524,12 @@ export const notesRoutes: FastifyPluginAsync = async (app) => {
 
     // Mettre à jour les liens si le contenu a changé
     if (updates.content !== undefined) {
-      await updateLinks(id, updates.content);
+      await updateLinks(note.id, updates.content);
     }
 
     // Créer une nouvelle version (toutes les 5 minutes ou sauvegarde manuelle)
     const lastVersion = await prisma.noteVersion.findFirst({
-      where: { noteId: id },
+      where: { noteId: note.id },
       orderBy: { versionNumber: 'desc' },
     });
 
@@ -380,7 +540,7 @@ export const notesRoutes: FastifyPluginAsync = async (app) => {
     if (shouldCreateVersion) {
       await prisma.noteVersion.create({
         data: {
-          noteId: id,
+          noteId: note.id,
           versionNumber: (lastVersion?.versionNumber ?? 0) + 1,
           content: updated.content,
           frontmatter: newFrontmatter,
@@ -393,7 +553,7 @@ export const notesRoutes: FastifyPluginAsync = async (app) => {
       userId,
       action: 'NOTE_UPDATED',
       resourceType: 'NOTE',
-      resourceId: id,
+      resourceId: note.id,
       details: { fields: Object.keys(updates) },
       ipAddress: request.ip,
     });
@@ -420,8 +580,13 @@ export const notesRoutes: FastifyPluginAsync = async (app) => {
     const { id } = request.params as { id: string };
     const userId = request.user.userId;
 
-    const note = await prisma.note.findUnique({ where: { id } });
-    if (!note || note.isDeleted) {
+    // Detect if id is a UUID or a slug
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+
+    const note = await prisma.note.findFirst({
+      where: isUuid ? { id, isDeleted: false } : { slug: id, isDeleted: false },
+    });
+    if (!note) {
       return reply.status(404).send({
         error: 'NOT_FOUND',
         message: 'Note non trouvée',
@@ -438,7 +603,7 @@ export const notesRoutes: FastifyPluginAsync = async (app) => {
 
     // Soft delete
     await prisma.note.update({
-      where: { id },
+      where: { id: note.id },
       data: {
         isDeleted: true,
         deletedAt: new Date(),

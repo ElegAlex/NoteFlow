@@ -56,10 +56,13 @@ export const tagsRoutes: FastifyPluginAsync = async (app) => {
       tags: ['Tags'],
       summary: 'Search tags for autocomplete',
       security: [{ cookieAuth: [] }],
-      querystring: z.object({
-        q: z.string().optional(),
-        limit: z.coerce.number().min(1).max(50).default(10),
-      }),
+      querystring: {
+        type: 'object',
+        properties: {
+          q: { type: 'string' },
+          limit: { type: 'number', default: 10, minimum: 1, maximum: 50 },
+        },
+      },
     },
   }, async (request) => {
     const { q, limit } = request.query as { q?: string; limit: number };

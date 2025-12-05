@@ -191,7 +191,9 @@
 }
 
 .tiptap .callout blockquote {
-  @apply my-2 border-l-2 border-current/20 pl-4 italic;
+  @apply my-2 border-l-2 pl-4 italic;
+  border-color: currentColor;
+  opacity: 0.8;
 }
 
 /* Tag styles (US-017) */

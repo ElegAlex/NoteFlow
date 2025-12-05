@@ -12,13 +12,14 @@ import Highlight from '@tiptap/extension-highlight';
 import Typography from '@tiptap/extension-typography';
 import type { Extensions } from '@tiptap/core';
 
-import { WikilinkExtension } from './extensions/Wikilink';
+import { WikilinkExtension } from './extensions/wikilink';
 import { CalloutExtension } from './extensions/callout';
 import { TagExtension } from './extensions/tag';
 import { MathInlineExtension, MathBlockExtension } from './extensions/math';
 import { MermaidExtension } from './extensions/mermaid';
 import { ToggleExtension } from './extensions/toggle';
 import { ImageExtension, type ImageExtensionOptions } from './extensions/image';
+import { EmbedExtension } from './extensions/embed';
 
 // ===========================================
 // Types pour les feature flags
@@ -47,6 +48,8 @@ export interface EditorFeatureFlags {
   toggle?: boolean;
   /** Active l'upload d'images (drag, drop, paste) */
   images?: boolean;
+  /** Active les embeds ![[note]] (US-040) */
+  embeds?: boolean;
 }
 
 export interface EditorConfigOptions {
@@ -84,9 +87,10 @@ export const DEFAULT_FEATURE_FLAGS: Required<EditorFeatureFlags> = {
   mermaid: true,
   toggle: true,
   images: true,
+  embeds: true,
 };
 
-export const DEFAULT_EDITOR_OPTIONS: Required<Omit<EditorConfigOptions, 'onTagClick' | 'onWikilinkClick'>> = {
+export const DEFAULT_EDITOR_OPTIONS: Required<Omit<EditorConfigOptions, 'onTagClick' | 'onWikilinkClick' | 'imageUpload'>> = {
   features: DEFAULT_FEATURE_FLAGS,
   placeholder: 'Commencez à écrire...',
   headingLevels: [1, 2, 3, 4],
@@ -129,6 +133,7 @@ export function createEditorExtensions(options: EditorConfigOptions = {}): Exten
           class: 'hljs',
         },
       },
+      // history: false, // TODO: Désactiver quand collaboration Yjs sera réactivée
     })
   );
 
@@ -177,7 +182,11 @@ export function createEditorExtensions(options: EditorConfigOptions = {}): Exten
 
   // Wikilinks
   if (flags.wikilinks) {
-    extensions.push(WikilinkExtension);
+    extensions.push(
+      WikilinkExtension.configure({
+        onWikilinkClick: options.onWikilinkClick,
+      })
+    );
   }
 
   // Callouts
@@ -224,6 +233,11 @@ export function createEditorExtensions(options: EditorConfigOptions = {}): Exten
     );
   }
 
+  // Embeds ![[note]] (US-040)
+  if (flags.embeds) {
+    extensions.push(EmbedExtension);
+  }
+
   return extensions;
 }
 
@@ -244,6 +258,7 @@ export const MINIMAL_PRESET: EditorConfigOptions = {
     math: false,
     mermaid: false,
     toggle: false,
+    embeds: false,
   },
   headingLevels: [1, 2, 3],
 };

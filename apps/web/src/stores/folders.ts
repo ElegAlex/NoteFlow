@@ -23,6 +23,9 @@ interface FoldersState {
   createFolder: (name: string, parentId: string | null) => Promise<FolderTreeNode>;
   updateFolder: (folderId: string, data: { name?: string; color?: string }) => Promise<void>;
   deleteFolder: (folderId: string) => Promise<void>;
+  // US-007: Drag & Drop
+  moveFolder: (folderId: string, newParentId: string | null) => Promise<void>;
+  moveNote: (noteId: string, newFolderId: string) => Promise<void>;
 }
 
 // Type pour l'état persisté (Set converti en Array pour sérialisation)
@@ -98,6 +101,18 @@ export const useFoldersStore = create<FoldersState>()(
 
       deleteFolder: async (folderId: string) => {
         await api.delete(`/folders/${folderId}`);
+        await get().fetchTree();
+      },
+
+      // US-007: Déplacer un dossier vers un nouveau parent
+      moveFolder: async (folderId: string, newParentId: string | null) => {
+        await api.post(`/folders/${folderId}/move`, { parentId: newParentId });
+        await get().fetchTree();
+      },
+
+      // US-007: Déplacer une note vers un autre dossier
+      moveNote: async (noteId: string, newFolderId: string) => {
+        await api.patch(`/notes/${noteId}`, { folderId: newFolderId });
         await get().fetchTree();
       },
     }),
