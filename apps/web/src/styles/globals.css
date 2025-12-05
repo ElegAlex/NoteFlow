@@ -162,3 +162,115 @@
 .tiptap ul[data-type="taskList"] li > div {
   @apply flex-1;
 }
+
+/* Callout styles (US-015) */
+.tiptap .callout {
+  @apply my-4;
+}
+
+.tiptap .callout .callout-content {
+  @apply text-sm;
+}
+
+.tiptap .callout .callout-content > *:first-child {
+  @apply mt-0;
+}
+
+.tiptap .callout .callout-content > *:last-child {
+  @apply mb-0;
+}
+
+/* Callout nested content styling */
+.tiptap .callout ul,
+.tiptap .callout ol {
+  @apply my-2;
+}
+
+.tiptap .callout pre {
+  @apply my-2;
+}
+
+.tiptap .callout blockquote {
+  @apply my-2 border-l-2 border-current/20 pl-4 italic;
+}
+
+/* Tag styles (US-017) */
+.tiptap .inline-tag {
+  @apply text-primary font-medium cursor-pointer px-1 py-0.5 rounded;
+  @apply bg-primary/10 hover:bg-primary/20 transition-colors;
+}
+
+/* Tag suggestion popup */
+.tag-suggestion-popup {
+  animation: fadeIn 0.15s ease-out;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Math styles (US-018) */
+.tiptap .math-inline {
+  @apply inline-block px-1 py-0.5 rounded bg-muted/50;
+}
+
+.tiptap .math-block {
+  @apply my-4 py-4 px-6 bg-muted/30 rounded-lg;
+}
+
+.tiptap .math-render {
+  @apply transition-all;
+}
+
+.tiptap .math-render:hover {
+  @apply bg-muted/50;
+}
+
+.tiptap .math-editor textarea {
+  @apply resize-none;
+}
+
+/* Mermaid styles (US-019) */
+.tiptap .mermaid-block {
+  @apply my-4;
+}
+
+.tiptap .mermaid-render {
+  @apply transition-all;
+}
+
+.tiptap .mermaid-render:hover {
+  @apply shadow-md;
+}
+
+.tiptap .mermaid-svg svg {
+  @apply max-w-full h-auto;
+}
+
+.tiptap .mermaid-editor textarea {
+  @apply resize-y;
+}
+
+/* Toggle styles (US-020) */
+.tiptap .toggle-block {
+  @apply my-3;
+}
+
+.tiptap .toggle-section {
+  @apply transition-all;
+}
+
+.tiptap .toggle-inner > *:first-child {
+  @apply mt-0;
+}
+
+.tiptap .toggle-inner > *:last-child {
+  @apply mb-0;
+}

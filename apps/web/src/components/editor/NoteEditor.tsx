@@ -1,27 +1,33 @@
 // ===========================================
-// Éditeur de Note TipTap (US-010 à US-016, US-030 à US-032)
+// Éditeur de Note TipTap (US-010 à US-017, US-030 à US-032)
 // US-008/US-009: Sauvegarde automatique avec indicateur
+// US-017: Tags inline avec autocomplétion
+// US-022: Configuration centralisée de l'éditeur
 // ===========================================
 
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
-import StarterKit from '@tiptap/starter-kit';
-import Placeholder from '@tiptap/extension-placeholder';
-import TaskList from '@tiptap/extension-task-list';
-import TaskItem from '@tiptap/extension-task-item';
-import Link from '@tiptap/extension-link';
-import Highlight from '@tiptap/extension-highlight';
-import Typography from '@tiptap/extension-typography';
+import { useNavigate } from 'react-router-dom';
 import { EditorToolbar } from './EditorToolbar';
 import { SaveIndicator } from './SaveIndicator';
-import { WikilinkExtension } from './extensions/Wikilink';
+import { TagSuggestionPopup, useTagSuggestion } from './extensions/tag';
 import { useAutoSave } from '../../hooks/useAutoSave';
+import {
+  createEditorExtensions,
+  createEditorProps,
+  type EditorConfigOptions,
+  type EditorFeatureFlags,
+} from './EditorConfig';
 
 interface NoteEditorProps {
   content: string;
   onSave: (content: string) => Promise<void>;
   noteId: string;
   editable?: boolean;
+  /** Feature flags pour activer/désactiver des extensions (US-022) */
+  features?: EditorFeatureFlags;
+  /** Configuration avancée de l'éditeur (US-022) */
+  config?: Omit<EditorConfigOptions, 'features' | 'onTagClick'>;
 }
 
 /** @deprecated Utiliser onSave à la place */
@@ -37,7 +43,11 @@ export function NoteEditor({
   onSave,
   noteId,
   editable = true,
+  features,
+  config,
 }: NoteEditorProps) {
+  const navigate = useNavigate();
+
   // Hook de sauvegarde automatique avec machine à états
   const {
     status,
@@ -54,46 +64,58 @@ export function NoteEditor({
     savedDisplayMs: 3000,
   });
 
+  // Callback pour clic sur un tag
+  const handleTagClick = useCallback(
+    (tag: string) => {
+      navigate(`/search?tag=${encodeURIComponent(tag)}`);
+    },
+    [navigate]
+  );
+
+  // Configuration centralisée des extensions (US-022)
+  const extensions = useMemo(
+    () =>
+      createEditorExtensions({
+        ...config,
+        features,
+        onTagClick: handleTagClick,
+      }),
+    [features, config, handleTagClick]
+  );
+
+  // Props de l'éditeur (US-022)
+  const editorProps = useMemo(() => createEditorProps(), []);
+
   const editor = useEditor({
-    extensions: [
-      StarterKit.configure({
-        heading: {
-          levels: [1, 2, 3, 4],
-        },
-        codeBlock: {
-          HTMLAttributes: {
-            class: 'hljs',
-          },
-        },
-      }),
-      Placeholder.configure({
-        placeholder: 'Commencez à écrire...',
-      }),
-      TaskList,
-      TaskItem.configure({
-        nested: true,
-      }),
-      Link.configure({
-        openOnClick: false,
-        HTMLAttributes: {
-          class: 'text-primary underline',
-        },
-      }),
-      Highlight.configure({
-        multicolor: true,
-      }),
-      Typography,
-      WikilinkExtension,
-    ],
+    extensions,
     content: content || '',
     editable,
-    editorProps: {
-      attributes: {
-        class: 'tiptap prose prose-sm max-w-none focus:outline-none p-6 min-h-[calc(100vh-10rem)]',
-      },
-    },
+    editorProps,
     onUpdate: ({ editor }) => {
       triggerSave(editor.getHTML());
+    },
+  });
+
+  // Hook pour les suggestions de tags
+  const searchTags = useCallback(async (query: string) => {
+    try {
+      const response = await fetch(
+        `/api/v1/tags/search?q=${encodeURIComponent(query)}&limit=8`,
+        { credentials: 'include' }
+      );
+      if (!response.ok) return [];
+      const data = await response.json();
+      return data.tags || [];
+    } catch {
+      return [];
+    }
+  }, []);
+
+  const tagSuggestion = useTagSuggestion({
+    editor,
+    onSearch: searchTags,
+    onSelect: () => {
+      // Tag inséré automatiquement par le hook
     },
   });
 
@@ -124,8 +146,17 @@ export function NoteEditor({
           </div>
         </div>
       )}
-      <div className="flex-1 overflow-auto">
+      <div className="flex-1 overflow-auto relative">
         <EditorContent editor={editor} />
+        {/* Tag suggestion popup (US-017) */}
+        <TagSuggestionPopup
+          isOpen={tagSuggestion.isOpen}
+          items={tagSuggestion.items}
+          selectedIndex={tagSuggestion.selectedIndex}
+          position={tagSuggestion.position}
+          query={tagSuggestion.query}
+          onSelect={tagSuggestion.selectTag}
+        />
       </div>
     </div>
   );

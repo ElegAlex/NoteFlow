@@ -48,6 +48,56 @@ export const tagsRoutes: FastifyPluginAsync = async (app) => {
   });
 
   /**
+   * GET /api/v1/tags/search
+   * US-017: Recherche de tags pour autocomplétion
+   */
+  app.get('/search', {
+    schema: {
+      tags: ['Tags'],
+      summary: 'Search tags for autocomplete',
+      security: [{ cookieAuth: [] }],
+      querystring: z.object({
+        q: z.string().optional(),
+        limit: z.coerce.number().min(1).max(50).default(10),
+      }),
+    },
+  }, async (request) => {
+    const { q, limit } = request.query as { q?: string; limit: number };
+
+    const where = q
+      ? {
+          name: {
+            contains: q,
+            mode: 'insensitive' as const,
+          },
+        }
+      : {};
+
+    const tags = await prisma.tag.findMany({
+      where,
+      include: {
+        _count: {
+          select: { notes: true },
+        },
+      },
+      orderBy: [
+        { notes: { _count: 'desc' } },
+        { name: 'asc' },
+      ],
+      take: limit,
+    });
+
+    return {
+      tags: tags.map((t) => ({
+        id: t.id,
+        name: t.name,
+        color: t.color,
+        noteCount: t._count.notes,
+      })),
+    };
+  });
+
+  /**
    * GET /api/v1/tags/cloud
    * US-063: Nuage de tags
    */
