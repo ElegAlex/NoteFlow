@@ -29,13 +29,13 @@ async function request<T = any>(
 
   const options: RequestInit = {
     method,
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers: {},
     credentials: 'include', // Pour les cookies
   };
 
+  // Seulement ajouter Content-Type et body si on a des données
   if (data && method !== 'GET') {
+    (options.headers as Record<string, string>)['Content-Type'] = 'application/json';
     options.body = JSON.stringify(data);
   }
 

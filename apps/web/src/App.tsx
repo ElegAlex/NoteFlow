@@ -8,6 +8,10 @@ import { SearchPage } from './pages/SearchPage';
 import { AdminPage } from './pages/AdminPage';
 import { GraphPage } from './pages/GraphPage';
 import { Toaster } from './components/ui/Toaster';
+import { ShortcutsPage } from './components/shortcuts/ShortcutsPage';
+import { ShortcutsModalTrigger } from './components/shortcuts/ShortcutsModal';
+import { DashboardPage } from './components/dashboard/DashboardPage';
+import { CalendarPage } from './components/calendar/CalendarPage';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isLoading } = useAuthStore();
@@ -46,6 +50,9 @@ export function App() {
           <Route path="folders/:folderId" element={<HomePage />} />
           <Route path="search" element={<SearchPage />} />
           <Route path="graph" element={<GraphPage />} />
+          <Route path="shortcuts" element={<ShortcutsPage />} />
+          <Route path="dashboard" element={<DashboardPage />} />
+          <Route path="calendar" element={<CalendarPage />} />
           <Route path="admin/*" element={<AdminPage />} />
         </Route>
 
@@ -53,6 +60,7 @@ export function App() {
       </Routes>
 
       <Toaster />
+      <ShortcutsModalTrigger />
     </>
   );
 }

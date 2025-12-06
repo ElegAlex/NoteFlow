@@ -11,10 +11,11 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { prisma } from '@collabnotes/database';
-import type { Note, CreateNoteRequest, NoteFrontmatter } from '@collabnotes/types';
+import type { Note, CreateNoteRequest, NoteFrontmatter, NoteMetadata } from '@collabnotes/types';
 import { createAuditLog } from '../services/audit.js';
 import { checkPermission } from '../services/permissions.js';
 import { parseLinks, updateLinks } from '../services/links.js';
+import { validateMetadata, updateNoteMetadata } from '../services/metadata.js';
 
 // ----- Schémas de validation -----
 
@@ -139,18 +140,20 @@ export const notesRoutes: FastifyPluginAsync = async (app) => {
 
   /**
    * GET /api/v1/notes/recent
-   * Notes récemment modifiées
+   * P1: Notes récemment modifiées avec métadonnées enrichies
    */
   app.get('/recent', {
     schema: {
       tags: ['Notes'],
-      summary: 'Get recent notes',
+      summary: 'Get recent notes with metadata',
       security: [{ cookieAuth: [] }],
     },
   }, async (request, reply) => {
     const userId = request.user.userId;
     const { limit = '10' } = request.query as { limit?: string };
+    const maxLimit = Math.min(parseInt(limit, 10) || 10, 50);
 
+    // Récupérer les notes récentes avec favoris de l'utilisateur
     const notes = await prisma.note.findMany({
       where: {
         isDeleted: false,
@@ -162,47 +165,13 @@ export const notesRoutes: FastifyPluginAsync = async (app) => {
         folder: {
           select: { id: true, name: true, path: true },
         },
-      },
-      orderBy: { updatedAt: 'desc' },
-      take: Math.min(parseInt(limit, 10) || 10, 50),
-    });
-
-    return {
-      notes: notes.map((note) => ({
-        ...note,
-        folderPath: note.folder?.path || null,
-        createdAt: note.createdAt.toISOString(),
-        updatedAt: note.updatedAt.toISOString(),
-      })),
-    };
-  });
-
-  /**
-   * GET /api/v1/notes/pinned
-   * US-044: Notes épinglées (pinned: true dans frontmatter)
-   */
-  app.get('/pinned', {
-    schema: {
-      tags: ['Notes'],
-      summary: 'Get pinned notes',
-      security: [{ cookieAuth: [] }],
-    },
-  }, async (request) => {
-    const notes = await prisma.note.findMany({
-      where: {
-        isDeleted: false,
-        frontmatter: {
-          path: ['pinned'],
-          equals: true,
-        },
-      },
-      include: {
-        folder: {
-          select: { id: true, name: true, path: true },
+        favorites: {
+          where: { userId },
+          select: { id: true },
         },
       },
       orderBy: { updatedAt: 'desc' },
-      take: 10,
+      take: maxLimit,
     });
 
     return {
@@ -210,9 +179,317 @@ export const notesRoutes: FastifyPluginAsync = async (app) => {
         id: note.id,
         title: note.title,
         slug: note.slug,
-        folderPath: note.folder?.path || null,
+        viewCount: note.viewCount,
+        createdAt: note.createdAt.toISOString(),
+        updatedAt: note.updatedAt.toISOString(),
+        folderPath: note.folder?.path || '/',
+        folderId: note.folderId,
+        isPinned: note.favorites.length > 0,
+        author: note.author,
       })),
     };
+  });
+
+  /**
+   * GET /api/v1/notes/pinned
+   * P1: Notes épinglées par l'utilisateur (via table Favorite)
+   */
+  app.get('/pinned', {
+    schema: {
+      tags: ['Notes'],
+      summary: 'Get user pinned notes',
+      security: [{ cookieAuth: [] }],
+    },
+  }, async (request) => {
+    const userId = request.user.userId;
+
+    const favorites = await prisma.favorite.findMany({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        note: {
+          include: {
+            folder: {
+              select: { id: true, name: true, path: true },
+            },
+          },
+        },
+      },
+    });
+
+    // Filtrer les notes supprimées
+    const validFavorites = favorites.filter(f => !f.note.isDeleted);
+
+    return {
+      notes: validFavorites.map((fav) => ({
+        id: fav.note.id,
+        title: fav.note.title,
+        slug: fav.note.slug,
+        viewCount: fav.note.viewCount,
+        createdAt: fav.note.createdAt.toISOString(),
+        updatedAt: fav.note.updatedAt.toISOString(),
+        folderPath: fav.note.folder?.path || '/',
+        folderId: fav.note.folderId,
+        isPinned: true,
+      })),
+    };
+  });
+
+  /**
+   * POST /api/v1/notes/:id/pin
+   * P1: Épingler une note pour l'utilisateur
+   */
+  app.post('/:id/pin', {
+    schema: {
+      tags: ['Notes'],
+      summary: 'Pin a note',
+      security: [{ cookieAuth: [] }],
+    },
+  }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const userId = request.user.userId;
+
+    // Vérifier que la note existe et n'est pas supprimée
+    const note = await prisma.note.findFirst({
+      where: { id, isDeleted: false },
+    });
+
+    if (!note) {
+      return reply.status(404).send({
+        error: 'NOT_FOUND',
+        message: 'Note non trouvée',
+      });
+    }
+
+    // Vérifier les permissions de lecture
+    const hasPermission = await checkPermission(userId, 'FOLDER', note.folderId, 'READ');
+    if (!hasPermission) {
+      return reply.status(403).send({
+        error: 'FORBIDDEN',
+        message: "Vous n'avez pas accès à cette note",
+      });
+    }
+
+    // Vérifier si déjà épinglée
+    const existing = await prisma.favorite.findUnique({
+      where: { userId_noteId: { userId, noteId: id } },
+    });
+
+    if (existing) {
+      return reply.status(409).send({
+        error: 'CONFLICT',
+        message: 'Note déjà épinglée',
+      });
+    }
+
+    // Créer l'épinglage
+    await prisma.favorite.create({
+      data: { userId, noteId: id },
+    });
+
+    await createAuditLog({
+      userId,
+      action: 'NOTE_PINNED',
+      resourceType: 'NOTE',
+      resourceId: id,
+      ipAddress: request.ip,
+    });
+
+    return reply.status(201).send({ message: 'Note épinglée' });
+  });
+
+  /**
+   * DELETE /api/v1/notes/:id/pin
+   * P1: Désépingler une note pour l'utilisateur
+   */
+  app.delete('/:id/pin', {
+    schema: {
+      tags: ['Notes'],
+      summary: 'Unpin a note',
+      security: [{ cookieAuth: [] }],
+    },
+  }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const userId = request.user.userId;
+
+    // Supprimer l'épinglage (ne fait rien si n'existe pas)
+    const deleted = await prisma.favorite.deleteMany({
+      where: { userId, noteId: id },
+    });
+
+    if (deleted.count > 0) {
+      await createAuditLog({
+        userId,
+        action: 'NOTE_UNPINNED',
+        resourceType: 'NOTE',
+        resourceId: id,
+        ipAddress: request.ip,
+      });
+    }
+
+    return reply.status(204).send();
+  });
+
+  /**
+   * POST /api/v1/notes/:id/view
+   * P1: Enregistrer une vue sur une note
+   */
+  app.post('/:id/view', {
+    schema: {
+      tags: ['Notes'],
+      summary: 'Record a view on a note',
+      security: [{ cookieAuth: [] }],
+    },
+  }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+
+    // Incrémenter le compteur de vues
+    // Note: Pour éviter le spam, on pourrait ajouter une logique de déduplication
+    // par userId/noteId/période (ex: 1 vue par user par heure)
+    await prisma.note.update({
+      where: { id },
+      data: { viewCount: { increment: 1 } },
+    });
+
+    return reply.status(204).send();
+  });
+
+  /**
+   * PATCH /api/v1/notes/:id/metadata
+   * P2: Mettre à jour les métadonnées d'une note
+   */
+  app.patch('/:id/metadata', {
+    schema: {
+      tags: ['Notes'],
+      summary: 'Update note metadata',
+      description: 'Update the frontmatter/metadata of a note with validation',
+      security: [{ cookieAuth: [] }],
+    },
+  }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const userId = request.user.userId;
+    const { metadata } = request.body as { metadata: NoteMetadata };
+
+    if (!metadata || typeof metadata !== 'object') {
+      return reply.status(400).send({
+        error: 'VALIDATION_ERROR',
+        message: 'Invalid metadata object',
+      });
+    }
+
+    // Vérifier que la note existe
+    const note = await prisma.note.findFirst({
+      where: { id, isDeleted: false },
+    });
+
+    if (!note) {
+      return reply.status(404).send({
+        error: 'NOT_FOUND',
+        message: 'Note non trouvée',
+      });
+    }
+
+    // Vérifier les permissions d'écriture
+    const hasPermission = await checkPermission(userId, 'FOLDER', note.folderId, 'WRITE');
+    if (!hasPermission) {
+      return reply.status(403).send({
+        error: 'FORBIDDEN',
+        message: "Vous n'avez pas les droits de modification sur cette note",
+      });
+    }
+
+    // Valider et normaliser les métadonnées
+    const validation = await validateMetadata(metadata);
+
+    if (!validation.valid) {
+      return reply.status(400).send({
+        error: 'VALIDATION_ERROR',
+        message: 'Invalid metadata',
+        details: {
+          errors: validation.errors,
+          warnings: validation.warnings,
+        },
+      });
+    }
+
+    // Fusionner avec le frontmatter existant
+    const currentFrontmatter = (note.frontmatter || {}) as NoteFrontmatter;
+    const newFrontmatter = {
+      ...currentFrontmatter,
+      ...validation.normalizedMetadata,
+      modified: new Date().toISOString(),
+      modified_by: request.user.username,
+    };
+
+    // Mettre à jour la note
+    const updated = await prisma.note.update({
+      where: { id },
+      data: {
+        frontmatter: newFrontmatter,
+        modifiedBy: userId,
+      },
+      include: {
+        folder: { select: { id: true, name: true, path: true } },
+      },
+    });
+
+    await createAuditLog({
+      userId,
+      action: 'NOTE_UPDATED',
+      resourceType: 'NOTE',
+      resourceId: id,
+      details: { fields: ['metadata'], keys: Object.keys(metadata) },
+      ipAddress: request.ip,
+    });
+
+    // Retourner la note avec les warnings éventuels
+    return reply.send({
+      ...updated,
+      frontmatter: newFrontmatter,
+      createdAt: updated.createdAt.toISOString(),
+      updatedAt: updated.updatedAt.toISOString(),
+      warnings: validation.warnings.length > 0 ? validation.warnings : undefined,
+    });
+  });
+
+  /**
+   * GET /api/v1/notes/:id/metadata
+   * P2: Récupérer uniquement les métadonnées d'une note
+   */
+  app.get('/:id/metadata', {
+    schema: {
+      tags: ['Notes'],
+      summary: 'Get note metadata',
+      security: [{ cookieAuth: [] }],
+    },
+  }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const userId = request.user.userId;
+
+    const note = await prisma.note.findFirst({
+      where: { id, isDeleted: false },
+      select: { id: true, folderId: true, frontmatter: true },
+    });
+
+    if (!note) {
+      return reply.status(404).send({
+        error: 'NOT_FOUND',
+        message: 'Note non trouvée',
+      });
+    }
+
+    const hasPermission = await checkPermission(userId, 'FOLDER', note.folderId, 'READ');
+    if (!hasPermission) {
+      return reply.status(403).send({
+        error: 'FORBIDDEN',
+        message: "Vous n'avez pas accès à cette note",
+      });
+    }
+
+    return reply.send({
+      noteId: note.id,
+      metadata: note.frontmatter || {},
+    });
   });
 
   /**

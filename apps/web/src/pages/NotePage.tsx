@@ -10,6 +10,8 @@ import { Spinner } from '../components/ui/Spinner';
 import { toast } from '../components/ui/Toaster';
 import { formatRelativeTime, debounce } from '../lib/utils';
 import { MarkdownEditor } from '../components/editor/MarkdownEditor';
+import { PinButton } from '../components/editor/PinButton';
+import { useNoteView } from '../hooks';
 
 export function NotePage() {
   const { noteId } = useParams<{ noteId: string }>();
@@ -28,6 +30,9 @@ export function NotePage() {
 
   const [title, setTitle] = useState('');
   const [showMenu, setShowMenu] = useState(false);
+
+  // P1: Enregistrer la vue de la note
+  useNoteView(currentNote?.id);
 
   useEffect(() => {
     if (noteId) {
@@ -142,6 +147,9 @@ export function NotePage() {
         </div>
 
         <div className="flex items-center gap-2">
+          {/* P1: Pin Button */}
+          {currentNote && <PinButton noteId={currentNote.id} />}
+
           {/* Save Status */}
           <span className="text-sm text-muted-foreground">
             {isSaving ? (

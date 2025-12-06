@@ -243,6 +243,105 @@ export const foldersRoutes: FastifyPluginAsync = async (app) => {
   });
 
   /**
+   * GET /api/v1/folders/:id/content
+   * P0: Lazy loading du contenu d'un dossier (sous-dossiers + notes)
+   * Optimisé pour la sidebar avec tri alphabétique
+   */
+  app.get('/:id/content', {
+    schema: {
+      tags: ['Folders'],
+      summary: 'Get folder content for lazy loading',
+      description: 'Returns children folders and notes sorted alphabetically (folders first, then notes)',
+      security: [{ cookieAuth: [] }],
+      params: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', format: 'uuid' },
+        },
+      },
+    },
+  }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const userId = request.user.userId;
+
+    const hasPermission = await checkPermission(userId, 'FOLDER', id, 'READ');
+    if (!hasPermission) {
+      return reply.status(403).send({
+        error: 'FORBIDDEN',
+        message: "Vous n'avez pas accès à ce dossier",
+      });
+    }
+
+    const folder = await prisma.folder.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        name: true,
+        children: {
+          orderBy: [{ name: 'asc' }],
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            color: true,
+            icon: true,
+            position: true,
+            _count: {
+              select: {
+                children: true,
+                notes: { where: { isDeleted: false } },
+              },
+            },
+          },
+        },
+        notes: {
+          where: { isDeleted: false },
+          orderBy: [{ title: 'asc' }],
+          select: {
+            id: true,
+            title: true,
+            slug: true,
+            position: true,
+            updatedAt: true,
+            createdAt: true,
+          },
+        },
+      },
+    });
+
+    if (!folder) {
+      return reply.status(404).send({
+        error: 'NOT_FOUND',
+        message: 'Dossier non trouvé',
+      });
+    }
+
+    // Formater la réponse selon FolderContent
+    return {
+      id: folder.id,
+      name: folder.name,
+      children: folder.children.map((child) => ({
+        id: child.id,
+        name: child.name,
+        slug: child.slug,
+        color: child.color,
+        icon: child.icon,
+        position: child.position,
+        hasChildren: child._count.children > 0,
+        notesCount: child._count.notes,
+      })),
+      notes: folder.notes.map((note) => ({
+        id: note.id,
+        title: note.title,
+        slug: note.slug,
+        position: note.position,
+        updatedAt: note.updatedAt.toISOString(),
+        createdAt: note.createdAt.toISOString(),
+      })),
+    };
+  });
+
+  /**
    * GET /api/v1/folders/:id
    * Récupérer un dossier par ID
    */

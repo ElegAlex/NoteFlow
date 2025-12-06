@@ -14,3 +14,4 @@ export {
   ACCEPTED_IMAGE_TYPES,
   MAX_IMAGE_SIZE,
 } from './useImageUpload';
+export { useNoteView } from './useNoteView';

@@ -105,6 +105,63 @@ export interface UpdateFolderRequest {
   position?: number;
 }
 
+// ----- P0: Sidebar Lazy Loading Types -----
+
+/**
+ * Prévisualisation d'un sous-dossier pour le lazy loading
+ */
+export interface FolderChildPreview {
+  id: string;
+  name: string;
+  slug: string;
+  color: string | null;
+  icon: string | null;
+  position: number;
+  hasChildren: boolean;
+  notesCount: number;
+}
+
+/**
+ * Prévisualisation d'une note pour l'affichage sidebar
+ */
+export interface NotePreview {
+  id: string;
+  title: string;
+  slug: string;
+  position: number;
+  updatedAt: string;
+  createdAt: string;
+}
+
+/**
+ * Contenu d'un dossier pour le lazy loading
+ * Retourné par GET /folders/:id/content
+ */
+export interface FolderContent {
+  id: string;
+  name: string;
+  children: FolderChildPreview[];
+  notes: NotePreview[];
+}
+
+/**
+ * Noeud de l'arbre sidebar avec état d'expansion
+ */
+export interface SidebarFolderNode {
+  id: string;
+  name: string;
+  slug: string;
+  parentId: string | null;
+  color: string | null;
+  icon: string | null;
+  position: number;
+  hasChildren: boolean;
+  notesCount: number;
+  children: SidebarFolderNode[];
+  notes: NotePreview[];
+  isLoaded: boolean;
+}
+
 // ----- Notes -----
 
 export interface Note {
@@ -414,4 +471,388 @@ export interface WSMessage {
   type: WSMessageType;
   payload: unknown;
   timestamp: number;
+}
+
+// ----- P2: MÉTADONNÉES -----
+
+/**
+ * Types de propriétés supportés pour les métadonnées des notes
+ */
+export type PropertyType =
+  | 'text'
+  | 'number'
+  | 'date'
+  | 'datetime'
+  | 'checkbox'
+  | 'tags'
+  | 'select'
+  | 'multiselect'
+  | 'link';
+
+/**
+ * Définition d'une propriété (schéma)
+ */
+export interface PropertyDefinition {
+  id: string;
+  name: string;
+  displayName: string;
+  type: PropertyType;
+  description?: string;
+  options: string[];
+  isDefault: boolean;
+  defaultValue?: string;
+  icon?: string;
+  color?: string;
+  position: number;
+  isSystem: boolean;
+  createdById: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * Métadonnées d'une note (valeurs)
+ */
+export interface NoteMetadata {
+  [key: string]: unknown;
+}
+
+/**
+ * Requête de création d'une définition de propriété
+ */
+export interface CreatePropertyRequest {
+  name: string;
+  displayName: string;
+  type: PropertyType;
+  description?: string;
+  options?: string[];
+  isDefault?: boolean;
+  defaultValue?: string;
+  icon?: string;
+  color?: string;
+}
+
+/**
+ * Requête de mise à jour d'une définition de propriété
+ */
+export interface UpdatePropertyRequest {
+  name?: string;
+  displayName?: string;
+  type?: PropertyType;
+  description?: string | null;
+  options?: string[];
+  isDefault?: boolean;
+  defaultValue?: string | null;
+  icon?: string | null;
+  color?: string | null;
+  position?: number;
+}
+
+/**
+ * Requête de mise à jour des métadonnées d'une note
+ */
+export interface UpdateNoteMetadataRequest {
+  metadata: NoteMetadata;
+}
+
+/**
+ * Résultat de validation des métadonnées
+ */
+export interface MetadataValidationResult {
+  valid: boolean;
+  errors: string[];
+  warnings: string[];
+  normalizedMetadata: NoteMetadata;
+}
+
+/**
+ * Filtre sur les métadonnées pour la recherche
+ */
+export interface MetadataFilter {
+  field: string;
+  operator: 'equals' | 'contains' | 'gt' | 'gte' | 'lt' | 'lte' | 'in' | 'hasAny' | 'isEmpty' | 'isNotEmpty';
+  value?: unknown;
+}
+
+/**
+ * Configuration du calendrier (champs de dates utilisés)
+ */
+export interface CalendarConfig {
+  id: string;
+  eventDateField: string;
+  dueDateField: string;
+  startDateField: string;
+  endDateField: string;
+}
+
+// CalendarEvent défini dans la section P3 Calendrier ci-dessous
+
+/**
+ * Plage de dates pour les requêtes calendrier
+ */
+export interface DateRange {
+  start: string;
+  end: string;
+}
+
+// ----- P3: RACCOURCIS CLAVIER -----
+
+/**
+ * Touches modificatrices
+ */
+export type ModifierKey = 'cmd' | 'ctrl' | 'alt' | 'shift';
+
+/**
+ * Touches spéciales
+ */
+export type SpecialKey =
+  | 'enter'
+  | 'backspace'
+  | 'delete'
+  | 'escape'
+  | 'tab'
+  | 'up'
+  | 'down'
+  | 'left'
+  | 'right'
+  | 'space';
+
+/**
+ * Combinaison de touches
+ */
+export interface ShortcutKeys {
+  modifiers: ModifierKey[];
+  key: string | SpecialKey;
+}
+
+/**
+ * Catégories de raccourcis
+ */
+export type ShortcutCategory =
+  | 'navigation'
+  | 'editor-actions'
+  | 'editor-formatting'
+  | 'editor-headings'
+  | 'editor-lists'
+  | 'editor-blocks'
+  | 'selection'
+  | 'panels';
+
+/**
+ * Contexte d'application du raccourci
+ */
+export type ShortcutContext = 'global' | 'editor' | 'sidebar' | 'modal';
+
+/**
+ * Définition d'un raccourci clavier
+ */
+export interface ShortcutDefinition {
+  id: string;
+  action: string;
+  description: string;
+  keys: ShortcutKeys;
+  category: ShortcutCategory;
+  context: ShortcutContext;
+  enabled?: boolean;
+}
+
+/**
+ * Informations sur une catégorie de raccourcis
+ */
+export interface ShortcutCategoryInfo {
+  id: ShortcutCategory;
+  label: string;
+  icon: string;
+}
+
+/**
+ * Liste des catégories avec métadonnées
+ */
+export const SHORTCUT_CATEGORIES: ShortcutCategoryInfo[] = [
+  { id: 'navigation', label: 'Navigation', icon: 'Compass' },
+  { id: 'editor-actions', label: 'Éditeur - Actions', icon: 'MousePointer' },
+  { id: 'editor-formatting', label: 'Éditeur - Formatage', icon: 'Type' },
+  { id: 'editor-headings', label: 'Éditeur - Titres', icon: 'Heading' },
+  { id: 'editor-lists', label: 'Éditeur - Listes', icon: 'List' },
+  { id: 'editor-blocks', label: 'Éditeur - Blocs', icon: 'Square' },
+  { id: 'selection', label: 'Sélection et déplacement', icon: 'Move' },
+  { id: 'panels', label: 'Panneaux', icon: 'PanelLeft' },
+];
+
+// ----- P3: DASHBOARD ANALYTICS -----
+
+/**
+ * Statistiques globales du workspace
+ */
+export interface OverviewStats {
+  totalNotes: number;
+  totalFolders: number;
+  activeUsers: number;
+  notesCreatedThisWeek: number;
+  notesModifiedThisWeek: number;
+  totalViews: number;
+}
+
+/**
+ * Point de données pour les graphiques d'activité
+ */
+export interface ActivityDataPoint {
+  date: string;
+  count: number;
+}
+
+/**
+ * Timeline d'activité (créations et modifications)
+ */
+export interface ActivityTimeline {
+  creations: ActivityDataPoint[];
+  modifications: ActivityDataPoint[];
+}
+
+/**
+ * Item de distribution (pour graphiques donut/bar)
+ */
+export interface DistributionItem {
+  label: string;
+  count: number;
+}
+
+/**
+ * Note populaire (top notes par vues)
+ */
+export interface TopNote {
+  id: string;
+  title: string;
+  viewCount: number;
+  updatedAt: string;
+  folderPath: string;
+}
+
+/**
+ * Contribution d'un utilisateur
+ */
+export interface UserContribution {
+  userId: string;
+  userName: string;
+  userEmail: string;
+  notesCreated: number;
+  notesModified: number;
+  lastActivity: string;
+}
+
+/**
+ * Champs de distribution supportés
+ */
+export type DistributionField = 'status' | 'priority' | 'tags';
+
+// ----- P3: CALENDRIER COMPLET -----
+
+/**
+ * Type d'événement calendrier
+ */
+export type CalendarEventType = 'deadline' | 'event' | 'task' | 'period-start' | 'period-end';
+
+/**
+ * Mode de vue du calendrier
+ */
+export type CalendarViewMode = 'month' | 'week' | 'agenda';
+
+/**
+ * Événement calendrier (extrait des métadonnées)
+ */
+export interface CalendarEvent {
+  id: string;
+  title: string;
+  date: string; // YYYY-MM-DD
+  time?: string; // HH:mm
+  endDate?: string;
+  noteId: string;
+  noteTitle: string;
+  noteSlug?: string;
+  type: CalendarEventType;
+  status?: string;
+  priority?: string;
+  color?: string;
+  tags?: string[];
+  folderId?: string;
+  folderName?: string;
+}
+
+/**
+ * Détail complet d'un événement
+ */
+export interface CalendarEventDetail extends CalendarEvent {
+  description?: string;
+  folder: {
+    id: string;
+    name: string;
+    path: string;
+  };
+  owner: {
+    id: string;
+    name: string;
+    email: string;
+  };
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * Options de requête pour les événements
+ */
+export interface GetEventsOptions {
+  start: string;
+  end: string;
+  types?: string[];
+  statuses?: string[];
+  tags?: string[];
+  folderId?: string;
+}
+
+/**
+ * Données pour création rapide d'événement
+ */
+export interface CreateQuickEventData {
+  title: string;
+  date: string;
+  type: CalendarEventType;
+  folderId?: string;
+}
+
+/**
+ * Filtres du calendrier
+ */
+export interface CalendarFilters {
+  types: CalendarEventType[];
+  statuses: string[];
+  tags: string[];
+  folderId: string | null;
+  search: string;
+}
+
+/**
+ * Jour dans le calendrier
+ */
+export interface CalendarDay {
+  date: Date;
+  isCurrentMonth: boolean;
+  isToday: boolean;
+  isWeekend: boolean;
+  events: CalendarEvent[];
+}
+
+/**
+ * Semaine dans le calendrier
+ */
+export interface CalendarWeek {
+  days: CalendarDay[];
+}
+
+/**
+ * Mois complet du calendrier
+ */
+export interface CalendarMonth {
+  year: number;
+  month: number; // 0-11
+  weeks: CalendarWeek[];
 }

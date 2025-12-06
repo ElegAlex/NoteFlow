@@ -152,7 +152,7 @@ npm run docker:dev   # Démarrer services Docker
 ## Roadmap
 
 - [x] **MVP** : Auth, CRUD notes, éditeur, collaboration temps réel
-- [ ] **V1.0** : Wikilinks, recherche, historique, images
+- [x] **V1.0** : Wikilinks, recherche, historique, images
 - [ ] **V2.0** : Homepage widgets, tableaux dynamiques
 
 ## Licence

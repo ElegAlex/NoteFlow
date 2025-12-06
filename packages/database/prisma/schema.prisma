@@ -30,20 +30,21 @@ model User {
   updatedAt   DateTime  @updatedAt @map("updated_at")
 
   // Relations
-  role             Role              @relation(fields: [roleId], references: [id])
-  sessions         Session[]
-  createdFolders   Folder[]          @relation("FolderCreatedBy")
-  createdNotes     Note[]            @relation("NoteCreatedBy")
-  modifiedNotes    Note[]            @relation("NoteModifiedBy")
-  deletedNotes     Note[]            @relation("NoteDeletedBy")
-  noteVersions     NoteVersion[]
-  comments         Comment[]
-  attachments      Attachment[]
-  permissionsGiven Permission[]      @relation("PermissionGrantedBy")
-  auditLogs        AuditLog[]
-  favorites        Favorite[]
-  homepageConfigs  HomepageConfig[]
-  announcements    Announcement[]
+  role                Role                 @relation(fields: [roleId], references: [id])
+  sessions            Session[]
+  createdFolders      Folder[]             @relation("FolderCreatedBy")
+  createdNotes        Note[]               @relation("NoteCreatedBy")
+  modifiedNotes       Note[]               @relation("NoteModifiedBy")
+  deletedNotes        Note[]               @relation("NoteDeletedBy")
+  noteVersions        NoteVersion[]
+  comments            Comment[]
+  attachments         Attachment[]
+  permissionsGiven    Permission[]         @relation("PermissionGrantedBy")
+  auditLogs           AuditLog[]
+  favorites           Favorite[]
+  homepageConfigs     HomepageConfig[]
+  announcements       Announcement[]
+  propertyDefinitions PropertyDefinition[] // P2: Propriétés créées par l'utilisateur
 
   @@index([username])
   @@index([email])
@@ -125,6 +126,7 @@ model Note {
   modifiedBy     String?   @map("modified_by") @db.Uuid
   position       Int       @default(0)
   isPinnedGlobal Boolean   @default(false) @map("is_pinned_global")
+  viewCount      Int       @default(0) @map("view_count") // P1: Compteur de vues
   isDeleted      Boolean   @default(false) @map("is_deleted")
   deletedAt      DateTime? @map("deleted_at")
   deletedById    String?   @map("deleted_by") @db.Uuid
@@ -151,6 +153,8 @@ model Note {
   @@index([authorId])
   @@index([isDeleted])
   @@index([isPinnedGlobal])
+  @@index([viewCount(sort: Desc)]) // P1: Index pour tri par popularité
+  @@index([frontmatter(ops: JsonbPathOps)], type: Gin) // P2: Index GIN pour requêtes JSONB
   @@map("notes")
 }
 
@@ -397,4 +401,60 @@ model Announcement {
 
   @@index([expiresAt])
   @@map("announcements")
+}
+
+// ----- P2: SYSTÈME DE MÉTADONNÉES -----
+
+/// Types de propriétés supportés pour les métadonnées des notes
+enum PropertyType {
+  TEXT
+  NUMBER
+  DATE
+  DATETIME
+  CHECKBOX
+  TAGS
+  SELECT
+  MULTISELECT
+  LINK
+}
+
+/// Définition d'une propriété au niveau global ou workspace
+/// Permet de suggérer des propriétés standardisées aux utilisateurs
+model PropertyDefinition {
+  id           String       @id @default(uuid()) @db.Uuid
+  name         String       @db.VarChar(50) // Nom technique (snake_case)
+  displayName  String       @map("display_name") @db.VarChar(100) // Nom affiché
+  type         PropertyType
+  description  String?      @db.VarChar(255)
+  options      String[]     @default([]) // Pour SELECT/MULTISELECT
+  isDefault    Boolean      @default(false) @map("is_default") // Propriété par défaut
+  defaultValue String?      @map("default_value") @db.VarChar(255)
+  icon         String?      @db.VarChar(50) // Icône optionnelle (lucide)
+  color        String?      @db.VarChar(7) // Couleur hex optionnelle
+  position     Int          @default(0) // Ordre d'affichage
+  isSystem     Boolean      @default(false) @map("is_system") // Non supprimable si true
+  createdById  String       @map("created_by_id") @db.Uuid
+  createdAt    DateTime     @default(now()) @map("created_at")
+  updatedAt    DateTime     @updatedAt @map("updated_at")
+
+  // Relations
+  createdBy User @relation(fields: [createdById], references: [id])
+
+  @@unique([name])
+  @@index([isDefault])
+  @@index([type])
+  @@map("property_definitions")
+}
+
+/// Configuration du calendrier pour les champs de dates
+model CalendarConfig {
+  id             String   @id @default(uuid()) @db.Uuid
+  eventDateField String   @default("event_date") @map("event_date_field") @db.VarChar(50)
+  dueDateField   String   @default("due_date") @map("due_date_field") @db.VarChar(50)
+  startDateField String   @default("start_date") @map("start_date_field") @db.VarChar(50)
+  endDateField   String   @default("end_date") @map("end_date_field") @db.VarChar(50)
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@map("calendar_config")
 }

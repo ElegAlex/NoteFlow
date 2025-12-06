@@ -45,6 +45,8 @@ interface UseCollaborationReturn {
   ydoc: Y.Doc | null;
   /** Provider Hocuspocus */
   provider: HocuspocusProvider | null;
+  /** Y.Map pour les métadonnées (P2) */
+  metadataMap: Y.Map<unknown> | null;
   /** État de connexion WebSocket */
   isConnected: boolean;
   /** État de synchronisation du document */
@@ -299,9 +301,13 @@ export function useCollaboration({
     }
   }, [userId, userName, userColor]);
 
+  // P2: Obtenir le Y.Map pour les métadonnées
+  const metadataMap = ydoc?.getMap<unknown>('metadata') ?? null;
+
   return {
     ydoc,
     provider,
+    metadataMap,
     isConnected,
     isSynced,
     collaborators,
